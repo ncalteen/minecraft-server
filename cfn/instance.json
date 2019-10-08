@@ -1,0 +1,160 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Minecraft Server on Amazon EC2",
+    "Parameters": {
+        "AmazonLinuxImage": {
+            "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+            "Default": "/aws/service/ami-amazon-linux-latest/amzn-ami-hvm-x86_64-gp2"
+        },
+        "MinecraftInstanceRole": {
+            "Type": "String",
+            "Description": "Role to authenticate from Minecraft Server to Amazon S3."
+        },
+        "MinecraftInstanceProfile": {
+            "Type": "String",
+            "Description": "Instance profile to assign to Minecraft Server."
+        },
+        "MinecraftPublicSG": {
+            "Type": "String",
+            "Description": "Public security group."
+        },
+        "MinecraftPublicSubnet": {
+            "Type": "String",
+            "Description": "Public subnet."
+        },
+        "MinecraftBucket": {
+            "Type": "String",
+            "Description": "Minecraft resource bucket (install, backups)."
+        },
+        "KeyName": {
+            "Type": "String",
+            "Default": "ncalteen"
+        }
+    },
+    "Resources": {
+        "MinecraftInstance": {
+            "Type": "AWS::EC2::Instance",
+            "CreationPolicy" : {
+                "ResourceSignal" : {
+                    "Timeout" : "PT5M"
+                }
+            },
+            "Properties": {
+                "EbsOptimized": true,
+                "IamInstanceProfile": { "Ref": "MinecraftInstanceProfile" },
+                "ImageId": { "Ref": "AmazonLinuxImage" },
+                "InstanceType": "m5.large",
+                "KeyName": { "Ref": "KeyName" },
+                "SecurityGroupIds": [
+                    { "Ref": "MinecraftPublicSG" }
+                ],
+                "SubnetId": { "Ref": "MinecraftPublicSubnet" },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "MinecraftServer"
+                    }
+                ],
+                "UserData": { "Fn::Base64" : { "Fn::Join" : ["", [
+                    "#!/bin/bash -xe\n",
+                    "yum install -y aws-cfn-bootstrap\n",
+                    "/opt/aws/bin/cfn-init -v ",
+                    "         --stack ", { "Ref" : "AWS::StackName" },
+                    "         --resource MinecraftInstance ",
+                    "         --configsets Install ",
+                    "         --region ", { "Ref" : "AWS::Region" },
+                    "\n",
+                    "/opt/aws/bin/cfn-signal -e $? ",
+                    "         --stack ", { "Ref" : "AWS::StackName" },
+                    "         --resource MinecraftInstance ",
+                    "         --region ", { "Ref" : "AWS::Region" },
+                    "\n"
+               ]]}}
+            },
+            "Metadata": {
+                "AWS::CloudFormation::Authentication": {
+                    "S3AccessCreds": {
+                        "type": "S3",
+                        "roleName": { "Ref" : "MinecraftInstanceRole"},
+                        "buckets" : [ { "Ref": "MinecraftBucket" } ]
+                    }
+                },
+                "AWS::CloudFormation::Init": {
+                    "configSets" : {
+                        "Install" : [ "config0", "config1" ]
+                    },
+                    "config0" : {
+                        "packages" : {
+                        },
+                        "groups" : {
+                        },
+                        "users" : {
+                        },
+                        "sources" : {
+                        },
+                        "files" : {
+                        },
+                        "commands" : {
+                            "01_update": {
+                                "command": "yum update -y"
+                            },
+                            "02_remove_java": {
+                                "command": "yum remove -y java-1.7.0-openjdk"
+                            },
+                            "03_mkdir": {
+                                "command": "mkdir /opt/minecraft"
+                            },
+                            "04_chown": {
+                                "command": "chown -R ec2-user:ec2-user /opt/minecraft"
+                            }
+                        },
+                        "services" : {
+                        }
+                    },
+                    "config1" : {
+                        "packages" : {
+                        },
+                        "groups" : {
+                        },
+                        "users" : {
+                        },
+                        "sources" : {
+                        },
+                        "files": {
+                            "/opt/minecraft/minecraft.jar": {
+                                "source": { "Fn::Sub": "https://s3.amazonaws.com/${MinecraftBucket}/install/minecraft.jar" },
+                                "mode": "000400",
+                                "owner": "ec2-user",
+                                "group": "ec2-user",
+                                "authentication": "S3AccessCreds"
+                            }
+                        },
+                        "commands" : {
+                            "00_install": {
+                                "command": "yum install -y java-1.8.0"
+                            },
+                            "01_start": {
+                                "command": "java -Xms4G -Xmx4G -jar /opt/minecraft/minecraft.jar",
+                                "cwd": "/opt/minecraft"
+                            },
+                            "02_accept": {
+                                "command": "sed -i 's/eula=false/eula=true/g' /opt/minecraft/eula.txt",
+                                "cwd": "/opt/minecraft"
+                            }
+                        },
+                        "services" : {
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "MinecraftInstancePublicIP": {
+            "Value": { "Fn::GetAtt": [ "MinecraftInstance", "PublicIp" ] }
+        },
+        "StartCommand": {
+            "Value": "cd /opt/minecraft && sudo java -Xms4G -Xmx4G -jar /opt/minecraft/minecraft.jar nogui"
+        }
+    }
+}

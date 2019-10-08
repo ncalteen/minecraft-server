@@ -1,0 +1,161 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Minecraft Server Amazon VPC and AWS IAM configuration.",
+    "Parameters": {
+        "CIDR": {
+            "Type": "String",
+            "Default": "10.0.0.0/16",
+            "Description": "VPC CIDR IP range.",
+            "AllowedPattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))$"
+        },
+        "YourIP": {
+            "Type": "String",
+            "Default": "10.0.0.1/32",
+            "Description": "Your IPv4 address (to allow connections to the Minecraft Server.",
+            "AllowedPattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))$"
+        }
+    },
+    "Resources": {
+        "MinecraftBucket": {
+            "Type": "AWS::S3::Bucket"
+        },
+        "MinecraftVPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CidrBlock": { "Ref": "CIDR" },
+                "EnableDnsSupport": true,
+                "EnableDnsHostnames": true
+            }
+        },
+        "MinecraftIGW": {
+            "Type": "AWS::EC2::InternetGateway"
+        },
+        "MinecraftIGWAttachment": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "Properties": {
+                "InternetGatewayId": { "Ref": "MinecraftIGW" },
+                "VpcId": { "Ref": "MinecraftVPC" }
+            }
+        },
+        "MinecraftPublicSubnet": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "VpcId": { "Ref": "MinecraftVPC" },
+                "AvailabilityZone": { "Fn::Select": [ 0, { "Fn::GetAZs": { "Ref": "AWS::Region" } } ] },
+                "CidrBlock": { "Fn::Select": [ 0, { "Fn::Cidr": [ { "Ref": "CIDR" }, 1, 8 ] } ] },
+                "MapPublicIpOnLaunch": true
+            }
+        },
+        "MinecraftPublicRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": { "Ref": "MinecraftVPC" }
+            }
+        },
+        "MinecraftDefaultPublicRoute": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "RouteTableId": { "Ref": "MinecraftPublicRouteTable" },
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": { "Ref": "MinecraftIGW" }
+            }
+        },
+        "MinecraftPublicSubnet1RouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "RouteTableId": { "Ref": "MinecraftPublicRouteTable" },
+                "SubnetId": { "Ref": "MinecraftPublicSubnet" }
+            }
+        },
+        "MinecraftPublicSG": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Default group for Minecraft servers running in public subnet.",
+                "VpcId": { "Ref": "MinecraftVPC" }
+            }
+        },
+        "MinecraftInboundSGRule1": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "CidrIp": { "Ref": "YourIP" },
+                "FromPort": 25565,
+                "ToPort": 25565,
+                "GroupId": { "Ref": "MinecraftPublicSG" },
+                "IpProtocol": "-1"
+            }
+        },
+        "MinecraftInboundSGRule2": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "CidrIp": { "Ref": "YourIP" },
+                "FromPort": 22,
+                "ToPort": 22,
+                "GroupId": { "Ref": "MinecraftPublicSG" },
+                "IpProtocol": "-1"
+            }
+        },
+        "MinecraftInstanceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [ {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": "ec2.amazonaws.com"
+                        },
+                        "Action": "sts:AssumeRole"
+                    } ]
+                },
+                "Path": "/",
+                "Policies": [ {
+                    "PolicyName": "MinecraftConfigBucketAccess",
+                    "PolicyDocument": {
+                        "Version": "2012-10-17",
+                        "Statement": [ {
+                            "Effect": "Allow",
+                            "Action": [
+                                "s3:DeleteObject",
+                                "s3:GetObject",
+                                "s3:HeadBucket",
+                                "s3:ListBucket",
+                                "s3:PutObject"
+                            ],
+                            "Resource": [
+                                { "Fn::Sub": "arn:aws:s3:::${MinecraftBucket}" },
+                                { "Fn::Sub": "arn:aws:s3:::${MinecraftBucket}/*" }
+                            ]
+                        } ]
+                    }
+                } ]
+                
+            }
+        },
+        "MinecraftInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    { "Ref": "MinecraftInstanceRole" }
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "MinecraftInstanceRole": {
+            "Value": { "Ref": "MinecraftInstanceRole" }
+        },
+        "MinecraftInstanceProfile": {
+            "Value": { "Ref": "MinecraftInstanceProfile" }
+        },
+        "MinecraftPublicSG": {
+            "Value": { "Ref": "MinecraftPublicSG" }
+        },
+        "MinecraftPublicSubnet": {
+            "Value": { "Ref": "MinecraftPublicSubnet" }
+        },
+        "MinecraftBucket": {
+            "Value": { "Ref": "MinecraftBucket" }
+        }
+    }
+}
