@@ -140,6 +140,10 @@
                             "02_accept": {
                                 "command": "sed -i 's/eula=false/eula=true/g' /opt/minecraft/eula.txt",
                                 "cwd": "/opt/minecraft"
+                            },
+                            "03_max_players": {
+                                "command": "sed -i 's/max-players=20/max-players=2/g' /opt/minecraft/server.properties",
+                                "cwd": "/opt/minecraft"
                             }
                         },
                         "services" : {
